@@ -1,0 +1,716 @@
+# INSTALAÇÃO DOS PACOTES #
+
+!pip install pandas
+
+import wandb
+import pandas as pd
+import numpy as np
+import torch
+import torch . nn as nn
+import torch . optim as optim
+from torch . utils . data import DataLoader , TensorDataset
+from sklearn . model_selection import train_test_split
+from sklearn . preprocessing import StandardScaler
+from sklearn . impute import SimpleImputer
+from scipy . stats import ks_2samp , chi2_contingency
+import yaml , random , matplotlib . pyplot as plt
+import kagglehub , shutil , os
+
+def set_seed ( seed =42) :
+  """Fix random seeds for full reproducibility ."""
+  random . seed ( seed )
+  np . random . seed ( seed )
+  torch . manual_seed ( seed )
+  if torch . cuda . is_available () :
+    torch . cuda . manual_seed_all ( seed )
+
+set_seed (42)
+
+#==============================================================================================================================#
+
+# IMPORTAÇÃO DA BIBLIOTECA #
+
+import kagglehub
+import shutil , os
+
+# Download latest version
+path = kagglehub.dataset_download("parisrohan/credit-score-classification")
+
+print("Path to dataset files:", path)
+
+
+destination = os . getcwd ()
+shutil . copytree ( path , os . path . join ( destination , " dataset ") ,
+dirs_exist_ok = True )
+
+#==============================================================================================================================#
+
+# ACESSAR O MEU WANDB #
+
+import wandb
+
+API_KEY = "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"
+wandb.login(key=API_KEY)
+
+wandb . init (
+  project ="IAproject-wandb ",
+  job_type =" load_raw ",
+  name =" load_raw "
+)
+
+artifact = wandb.Artifact (
+  name ="raw_data.csv", # artifact name ( versioned automatically)
+  type ="dataset ", # type tag for organizational purposes
+  description ="Credit_Score"
+)
+temp_path = " temp_raw .csv "
+df_raw.to_csv ( temp_path , index = False )
+artifact.add_file ( temp_path )
+
+
+# Log the artifact to W&B
+wandb . log_artifact ( artifact )
+
+
+# Log summary statistics visible on the W&B dashboard
+wandb . summary [" rows "] = len (df_raw)
+wandb . summary [" columns "] = list ( df_raw.columns )
+
+
+wandb . finish ()
+
+#==============================================================================================================================#
+
+# ESCOLHA DO DATASET DE LEITURA #
+
+df_raw = pd.read_csv (
+    "/content/ dataset /train.csv",
+    low_memory = False # avoids dtype warnings on mixed - type columns
+)
+
+#==============================================================================================================================#
+# TRANSFORMAR OS ELEMENTOS EM NUMÉRICOS #
+
+# Colunas caracterizadas como objeto
+numeric_cols_to_convert = [
+    'ID',
+    'Customer_ID',
+    'Month',
+    'Name',
+    'SSN',
+    'Occupation',
+    'Type_of_Loan',
+    'Credit_Mix',
+    'Payment_Behaviour',
+    'Payment_of_Min_Amount',
+    'Age',
+    'Annual_Income',
+    'Num_of_Loan',
+    'Num_of_Delayed_Payment',
+    'Changed_Credit_Limit',
+    'Outstanding_Debt',
+    'Amount_invested_monthly',
+    'Monthly_Balance'
+]
+
+#Converte as colunas para valores numéricos
+for col in numeric_cols_to_convert:
+    if col in df_raw.columns and df_raw[col].dtype == 'object':
+        # Clean potential non-numeric characters like '$', ',', ' ' or '%' before conversion
+        df_raw[col] = df_raw[col].astype(str).str.replace('[^\d.-]', '', regex=True)
+        df_raw[col] = pd.to_numeric(df_raw[col], errors='coerce')
+        print(f"Coluna '{col}' convertida para numérico.")
+
+# Substitui os elementos com valores -500 por valores nulos
+df_raw['Age'] = df_raw['Age'].replace(-500, np.nan)
+print("Valores inválidos (-500) na coluna 'Age' substituídos por NaN.")
+
+#==============================================================================================================================#
+
+#Converte os elementos da coluna de crédito_por_ano em valores numéricos:
+def parse_credit_history_age(age_str):
+    if pd.isna(age_str):
+        return np.nan
+    try:
+        # Remove any non-numeric characters and then split
+        parts = str(age_str).replace('years', '').replace('and', '').replace('months', '').split()
+        years = int(parts[0]) if parts else 0
+        months = int(parts[1]) if len(parts) > 1 else 0
+        return years * 12 + months # Convert to total months
+    except:
+        return np.nan
+
+# Apply the function to 'Credit_History_Age'
+df_raw['Credit_History_Age'] = df_raw['Credit_History_Age'].apply(parse_credit_history_age)
+print("Coluna 'Credit_History_Age' convertida para meses numéricos.")
+
+#==============================================================================================================================#
+
+#CONVERTE OS ELEMENTOS DA COLUNA CREDIT_SCORE PARA VALORES NUMÉRICOS
+
+# Mapeia os valores de texto 'Good', 'Standard' e 'Poor' para numéricos
+credit_score_mapping = {
+    'Good': 2,
+    'Standard': 1,
+    'Poor': 0 # Assumindo que 'Poor' pode existir ou para generalizar
+}
+
+df_raw['Credit_Score'] = df_raw['Credit_Score'].map(credit_score_mapping)
+
+# Converte a coluna para tipo numérico (float, para lidar com possíveis NaN após o mapeamento)
+df_raw['Credit_Score'] = pd.to_numeric(df_raw['Credit_Score'], errors='coerce')
+
+print("Coluna 'Credit_Score' convertida para numérico. Primeiras 5 linhas com a coluna atualizada:")
+display(df_raw[['Credit_Score']].head())
+
+#==============================================================================================================================#
+# Recarrega o dataset para restaurar o df_raw para seu estado original de DataFrame
+df_raw = pd.read_csv (
+    "/content/ dataset /train.csv",
+    low_memory = False # evita avisos de dtype em colunas de tipo misto
+)
+
+print("DataFrame recarregado.")
+
+#============================================================================================================================
+# Excluir Coluna Que não serão utilizadas #
+
+drop_cols = [
+    'Age',
+    'ID',
+    'Customer_ID',
+    'Month',
+    'Name',
+    'SSN',
+    'Occupation',
+    'Num_Bank_Accounts',
+    'Num_Credit_Card',
+    'Type_of_Loan',
+    'Delay_from_due_date',
+    'Monthly_Inhand_Salary',
+    'Credit_Mix',
+    'Payment_of_Min_Amount',
+    'Credit_History_Age'
+]
+
+# Exclui as colunas especificadas do DataFrame
+df_raw = df_raw.drop(columns=drop_cols, errors='ignore')
+
+print("Colunas excluídas com sucesso. Informações atualizadas do DataFrame:")
+df_raw.info()
+
+#==============================================================================================================================#
+
+# Criação de tabelas e gráficos #
+
+# (Historiograma) #
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Escolha uma coluna numérica do seu df_raw para plotar
+column_to_plot = 'Credit_Utilization_Ratio'
+
+# Cria o histograma com a curva de densidade (KDE)
+plt.figure(figsize=(10, 6)) # Ajuste o tamanho da figura para melhor visualização
+sns.histplot(df_raw[column_to_plot], bins=30, kde=True, color='purple') # Ajuste o número de bins e a cor
+
+# Adiciona título e rótulos ao gráfico
+plt.title(f'Distribuição de {column_to_plot} no dataset de Crédito', fontsize=14)
+plt.xlabel(column_to_plot, fontsize=12)
+plt.ylabel('Contagem', fontsize=12)
+plt.grid(axis='y', alpha=0.75) # Adiciona um grid para facilitar a leitura
+plt.tight_layout() # Ajusta o layout para evitar sobreposição
+plt.show() # Exibe o gráfico
+
+# (Mapa de calor) #
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Seleciona apenas as colunas numéricas para o cálculo da correlação
+numeric_df = df_raw.select_dtypes(include=['float64', 'int64'])
+
+# Calcula a matriz de correlação
+correlation_matrix = numeric_df.corr()
+
+# Cria o mapa de calor
+plt.figure(figsize=(14, 10)) # Ajuste o tamanho da figura para melhor visualização
+sns.heatmap(correlation_matrix,
+            annot=True, # Mostra os valores de correlação no mapa de calor
+            cmap='coolwarm', # Escolha um mapa de cores (coolwarm é bom para correlação)
+            fmt=".2f", # Formata os números com duas casas decimais
+            linewidths=.5) # Adiciona linhas entre as células para melhor distinção
+
+plt.title('Mapa de Calor da Matriz de Correlação das Variáveis Numéricas', fontsize=16)
+plt.xticks(rotation=45, ha='right') # Rotaciona os rótulos do eixo X para melhor legibilidade
+plt.yticks(rotation=0)
+plt.tight_layout() # Ajusta o layout para evitar sobreposição
+plt.show()
+
+#(Pair Plot)#
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Exemplo com algumas colunas selecionadas:
+selected_cols_for_pairplot = [
+    'Annual_Income',
+    'Interest_Rate',
+    'Num_of_Loan',
+    'Outstanding_Debt',
+    'Credit_Utilization_Ratio',
+    'Credit_Score' # Incluindo a variável alvo para ver relações
+]
+
+# Filtrar apenas as colunas que existem no DataFrame
+existing_selected_cols = [col for col in selected_cols_for_pairplot if col in df_clean.columns]
+
+if existing_selected_cols:
+    print(f"Gerando Pair Plot para as colunas: {existing_selected_cols}")
+    sns.pairplot(df_clean[existing_selected_cols], hue='Credit_Score', palette='viridis')
+    plt.suptitle('Pair Plot das Variáveis Selecionadas por Credit Score', y=1.02) # Ajusta o título para não sobrepor
+    plt.show()
+else:
+    print("Nenhuma das colunas selecionadas está presente no DataFrame.")
+
+#==============================================================================================================================#
+
+# ELIMINAÇÃO DE DADOS REPITIDOS/NULOS #
+
+missing_values = df_raw.isnull().sum()
+missing_percentage = (df_raw.isnull().sum() / len(df_raw)) * 100
+
+missing_info = pd.DataFrame({
+    'Missing Count': missing_values,
+    'Missing Percentage': missing_percentage
+})
+
+# Filtrar apenas colunas com valores ausentes
+missing_info = missing_info[missing_info['Missing Count'] > 0].sort_values(by='Missing Percentage', ascending=False)
+display(missing_info)
+
+num_cols = df_raw.select_dtypes(include=['number']).columns
+cat_cols = df_raw.select_dtypes(include=['object']).columns
+
+# Imputar valores ausentes em colunas numéricas com a mediana
+print("Imputando valores ausentes em colunas numéricas com a mediana...")
+for col in num_cols:
+    if df_raw[col].isnull().any():
+        median_val = df_raw[col].median()
+        df_raw[col].fillna(median_val, inplace=True)
+        print(f"  - Coluna '{col}': preenchida com a mediana {median_val}")
+
+# Imputar valores ausentes em colunas categóricas com a moda
+print("\nImputando valores ausentes em colunas categóricas com a moda...")
+for col in cat_cols:
+    if df_raw[col].isnull().any():
+        mode_val = df_raw[col].mode()[0]
+        df_raw[col].fillna(mode_val, inplace=True)
+        print(f"  - Coluna '{col}': preenchida com a moda '{mode_val}'")
+
+print("\nVerificando valores ausentes após imputação:")
+display(df_raw.isnull().sum()[df_raw.isnull().sum() > 0])
+
+def remove_duplicates(df):
+    before = len(df)
+    df = df.drop_duplicates()
+    print(f"Removed {before - len(df)} duplicates")
+    return df
+
+df_clean = remove_duplicates(df_raw)
+
+df_copy = df_clean.copy()
+print("Cópia do DataFrame df_clean criada como df_copy.")
+#==============================================================================================================================#
+
+# PREPARAÇÃO DOS DADOS PARA TREINAMENTO DA IA #
+
+X = df_copy.drop('Credit_Score', axis=1)
+y = df_copy['Credit_Score']
+
+# Dividir os dados em conjuntos de treinamento e teste
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+print(f"Formato de X_train: {X_train.shape}")
+print(f"Formato de X_test: {X_test.shape}")
+print(f"Formato de y_train: {y_train.shape}")
+print(f"Formato de y_test: {y_test.shape}")
+
+#==============================================================================================================================#
+
+# Escalonamento de Features #
+
+# Identificar colunas numéricas para escalonamento
+numeric_features = X_train.select_dtypes(include=np.number).columns
+
+# Inicializar o StandardScaler
+scaler = StandardScaler()
+
+# Ajustar o scaler nos dados de treinamento e transformar ambos os conjuntos
+X_train_scaled = scaler.fit_transform(X_train[numeric_features])
+X_test_scaled = scaler.transform(X_test[numeric_features])
+
+# Converter de volta para DataFrame (opcional, mas bom para manter a estrutura)
+X_train_scaled = pd.DataFrame(X_train_scaled, columns=numeric_features, index=X_train.index)
+X_test_scaled = pd.DataFrame(X_test_scaled, columns=numeric_features, index=X_test.index)
+
+print("Features numéricas escalonadas com sucesso.")
+display(X_train_scaled.head())
+
+#==============================================================================================================================#
+
+# Criação da cópia de segurança da IA #
+df_copy = df_clean.copy()
+
+#==============================================================================================================================#
+
+# Definir o Modelo de IA (Rede Neural com PyTorch) #
+
+# ( Rede neural de proporção 20% e 80% ) #
+config = {
+    "data": {
+        "raw_path": "/content/ dataset /train.csv",
+        "test_size": 0.2,
+        "random_state": 42,
+        "target_col": "Credit_Score",
+        "feature_cols": ['Annual_Income',
+                         'Interest_Rate',
+                         "Num_of_Loan",
+                         'Num_of_Delayed_Payment',
+                         'Changed_Credit_Limit',
+                         'Num_Credit_Inquiries',
+                         'Outstanding_Debt',
+                         'Credit_Utilization_Ratio',
+                         'Total_EMI_per_month',
+                         'Amount_invested_monthly',
+                         'Payment_Behaviour',
+                         'Monthly_Balance'
+                         ],
+        "missing_threshold": 0.5,
+        "imputation_strategy": "mean"
+    },
+    "model": {
+        "hidden_sizes": [64, 32],
+        "dropout": 0.2,
+        "learning_rate": 0.001,
+        "batch_size": 32,
+        "epochs": 100,
+        "early_stopping_patience": 10
+    }
+}
+
+# ( Rede neural de proporção 30% e 70% ) #
+
+config = {
+    "data": {
+        "raw_path": "/content/ dataset /train.csv",
+        "test_size": 0.3,
+        "random_state": 42,
+        "target_col": "Credit_Score",
+        "feature_cols": ['Annual_Income',
+                         'Interest_Rate',
+                         "Num_of_Loan",
+                         'Num_of_Delayed_Payment',
+                         'Changed_Credit_Limit',
+                         'Num_Credit_Inquiries',
+                         'Outstanding_Debt',
+                         'Credit_Utilization_Ratio',
+                         'Total_EMI_per_month',
+                         'Amount_invested_monthly',
+                         'Payment_Behaviour',
+                         'Monthly_Balance'
+                         ],
+        "missing_threshold": 0.5,
+        "imputation_strategy": "mean"
+    },
+    "model": {
+        "hidden_sizes": [64, 32],
+        "dropout": 0.2,
+        "learning_rate": 0.001,
+        "batch_size": 32,
+        "epochs": 100,
+        "early_stopping_patience": 10
+    }
+}
+
+print(config['data']['feature_cols'])
+#==============================================================================================================================#
+
+# Configurar Treinamento e Avaliação #
+
+class MLP(nn.Module):
+    def __init__(self, input_dim, hidden_sizes, output_dim=1, dropout=0.2):
+        super().__init__()
+        layers = []
+        prev = input_dim
+        for h in hidden_sizes:
+            layers.append(nn.Linear(prev, h))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout))
+            prev = h
+        layers.append(nn.Linear(prev, output_dim))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
+
+def create_torch_dataloaders(X_train_scaled, y_train, X_test_scaled, y_test, batch_size):
+    # Converter para tensores PyTorch
+    # Features (X) como float32
+    X_train_tensor = torch.tensor(X_train_scaled.values, dtype=torch.float32)
+    X_test_tensor = torch.tensor(X_test_scaled.values, dtype=torch.float32)
+    
+    # Rótulos (y) como long para nn.CrossEntropyLoss
+    y_train_tensor = torch.tensor(y_train.values, dtype=torch.long)
+    y_test_tensor = torch.tensor(y_test.values, dtype=torch.long)
+
+    # Criar TensorDatasets
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+
+    # Criar DataLoaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+    return train_loader, test_loader
+
+def train_and_evaluate_model(config, train_loader, test_loader, input_dim, output_dim):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Usando dispositivo: {device}")
+
+    model = MLP(input_dim, config['model']['hidden_sizes'], output_dim=output_dim, dropout=config['model']['dropout']).to(device)
+    
+    # Alterado para CrossEntropyLoss para classificação multiclasse
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=config['model']['learning_rate'])
+
+    best_loss = float('inf')
+    patience = config['model']['early_stopping_patience']
+    counter = 0
+
+    wandb.watch(model, log="all", log_freq=100) # log_freq para controlar a frequência do log
+
+    for epoch in range(config['model']['epochs']):
+        model.train()
+        train_loss = 0.0
+        for X_batch, y_batch in train_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            optimizer.zero_grad()
+            output = model(X_batch)
+            loss = criterion(output, y_batch)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item() * X_batch.size(0)
+        train_loss /= len(train_loader.dataset)
+
+        model.eval()
+        val_loss = 0.0
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for X_batch, y_batch in test_loader:
+                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                output = model(X_batch)
+                loss = criterion(output, y_batch)
+                val_loss += loss.item() * X_batch.size(0)
+                
+                # Lógica de predição e acurácia para multiclasse
+                _, predicted = torch.max(output.data, 1) # Obter a classe com maior probabilidade
+                total += y_batch.size(0)
+                correct += (predicted == y_batch).sum().item()
+        
+        val_loss /= len(test_loader.dataset)
+        acc = correct / total
+
+        wandb.log({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "val_acc": acc})
+
+        print(f"Epoch {epoch+1}/{config['model']['epochs']}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {acc:.4f}")
+
+        if val_loss < best_loss:
+            best_loss = val_loss
+            counter = 0
+            torch.save(model.state_dict(), "best_model.pt") # Salvar o melhor modelo localmente
+        else:
+            counter += 1
+            if counter >= patience:
+                print(f"Early stopping triggered at epoch {epoch+1}")
+                break
+
+    model.load_state_dict(torch.load("best_model.pt")) # Carregar o melhor modelo
+
+    # Logar o melhor modelo como um artefato no W&B
+    model_artifact = wandb.Artifact("trained_mlp_model", type="model")
+    model_artifact.add_file("best_model.pt")
+    wandb.log_artifact(model_artifact)
+
+    return model
+
+def split_train_test(df, target_col, feature_cols, test_size=0.2, random_state=42):
+    X = df[feature_cols]
+    y = df[target_col]
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state
+    )
+    train_df = pd.concat([X_train, y_train], axis=1)
+    test_df = pd.concat([X_test, y_test], axis=1)
+    return train_df, test_df
+
+def compare_distributions(train_df, test_df, columns):
+    results = {}
+    for col in columns:
+        train_vals = train_df[col].dropna()
+        test_vals = test_df[col].dropna()
+        if train_df[col].dtype in ['int64', 'float64']:
+            ks_stat, p_value = ks_2samp(train_vals, test_vals)
+            results[col] = {'test': 'KS', 'statistic': ks_stat, 'p_value': p_value}
+        else:
+            train_counts = train_vals.value_counts(normalize=True)
+            test_counts = test_vals.value_counts(normalize=True)
+            all_cats = sorted(set(train_counts.index).union(set(test_counts.index)))
+            train_probs = [train_counts.get(cat, 0) for cat in all_cats]
+            test_probs = [test_counts.get(cat, 0) for cat in all_cats]
+            chi2, p_value, _, _ = chi2_contingency([train_probs, test_probs])
+            results[col] = {'test': 'Chi2', 'statistic': chi2, 'p_value': p_value}
+    return results
+
+train_df, test_df = split_train_test(df_clean,
+                                     target_col=config['data']['target_col'],
+                                     feature_cols=config['data']['feature_cols'],
+                                     test_size=config['data']['test_size'],
+                                     random_state=config['data']['random_state'])
+
+print(f"Treino: {len(train_df)} amostras")
+print(f"Teste:  {len(test_df)} amostras")
+
+
+feature_cols = config['data']['feature_cols']
+comp_results = compare_distributions(train_df, test_df, feature_cols)
+
+if wandb.run is not None:
+    wandb.finish()
+wandb.init(project="mlops-wandb-demo", job_type="split_data", name="split_data")
+
+train_artifact = wandb.Artifact("train_data", type="dataset")
+train_df.to_csv("temp_train.csv", index=False)
+train_artifact.add_file("temp_train.csv")
+wandb.log_artifact(train_artifact)
+
+test_artifact = wandb.Artifact("test_data", type="dataset")
+test_df.to_csv("temp_test.csv", index=False)
+test_artifact.add_file("temp_test.csv")
+wandb.log_artifact(test_artifact)
+
+comp_df = pd.DataFrame(comp_results).T
+comp_table = wandb.Table(dataframe=comp_df)
+wandb.log({"distribution_comparison": comp_table})
+
+wandb.summary["train_size"] = len(train_df)
+wandb.summary["test_size"] = len(test_df)
+
+wandb.finish()
+print("Artefatos de treino e teste salvos com sucesso.")
+
+# Finalizar qualquer run anterior do wandb para evitar conflitos
+if wandb.run is not None:
+    wandb.finish()
+
+# Inicializar uma nova run do wandb para o treinamento
+wandb.init(
+    project="IAproject-wandb", 
+    job_type="train_model", 
+    name="mlp_training_run", 
+    config=config # Passar a configuração para o wandb
+)
+
+# Determinar o número de classes a partir dos seus dados de y_train
+# O 'y' no train_df e test_df é a coluna 'Credit_Score', que já foi mapeada para 0, 1, 2.
+# O número de classes será o número de valores únicos em y_train.
+num_classes = y_train.nunique()
+
+# Criar os DataLoaders usando os dados já escalonados e divididos
+train_loader, test_loader = create_torch_dataloaders(
+    X_train_scaled, y_train, X_test_scaled, y_test, config['model']['batch_size']
+)
+
+# Determinar a dimensão de entrada para o modelo
+input_dim = X_train_scaled.shape[1]
+
+# Treinar e avaliar o modelo
+model_final = train_and_evaluate_model(
+    config, train_loader, test_loader, input_dim, num_classes
+)
+
+# Finalizar a run do wandb
+wandb.finish()
+
+print("Treinamento concluído e melhor modelo salvo no W&B.")
+
+#==============================================================================================================================#
+
+# Avaliação Final da Precisão da IA #
+
+import torch
+import torch.nn as nn
+
+# Assegure que o dispositivo é o mesmo usado no treinamento
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Carregar o melhor modelo salvo
+# Re-criar o modelo com a mesma arquitetura para carregar os pesos
+input_dim = X_train_scaled.shape[1]
+num_classes = y_train.nunique()
+model_final = MLP(input_dim, config['model']['hidden_sizes'], output_dim=num_classes, dropout=config['model']['dropout']).to(device)
+model_final.load_state_dict(torch.load("best_model.pt"))
+
+# Colocar o modelo em modo de avaliação
+model_final.eval()
+
+correct = 0
+total = 0
+
+with torch.no_grad(): # Desativar o cálculo de gradientes
+    for X_batch, y_batch in test_loader:
+        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        output = model_final(X_batch)
+        _, predicted = torch.max(output.data, 1) # Obter a classe com maior probabilidade
+        total += y_batch.size(0)
+        correct += (predicted == y_batch).sum().item()
+
+accuracy = correct / total
+print(f'Acurácia final da IA no conjunto de testes: {accuracy:.4f}')
+
+#========================================================================================================================
+
+# Criação da Matriz de Confusão #
+
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Assegure que o modelo está no modo de avaliação e no dispositivo correto
+model_final.eval()
+
+all_predictions = []
+all_true_labels = []
+
+with torch.no_grad():
+    for X_batch, y_batch in test_loader:
+        X_batch = X_batch.to(device)
+        outputs = model_final(X_batch)
+        _, predicted = torch.max(outputs.data, 1)
+        all_predictions.extend(predicted.cpu().numpy())
+        all_true_labels.extend(y_batch.cpu().numpy())
+
+# Calcular a matriz de confusão
+cm = confusion_matrix(all_true_labels, all_predictions)
+
+# Definir rótulos para as classes (assumindo 0: Poor, 1: Standard, 2: Good)
+class_labels = ['Poor', 'Standard', 'Good']
+
+# Visualizar a matriz de confusão
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_labels, yticklabels=class_labels)
+plt.xlabel('Previsão do Modelo')
+plt.ylabel('Rótulo Verdadeiro')
+plt.title('Matriz de Confusão do Modelo MLP')
+plt.show()
+
+print("Matriz de Confusão calculada e visualizada com sucesso.")
