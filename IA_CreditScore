@@ -164,7 +164,15 @@ print("Coluna 'Credit_Score' convertida para numérico. Primeiras 5 linhas com a
 display(df_raw[['Credit_Score']].head())
 
 #==============================================================================================================================#
+# Recarrega o dataset para restaurar o df_raw para seu estado original de DataFrame
+df_raw = pd.read_csv (
+    "/content/ dataset /train.csv",
+    low_memory = False # evita avisos de dtype em colunas de tipo misto
+)
 
+print("DataFrame recarregado.")
+
+#============================================================================================================================
 # Excluir Coluna Que não serão utilizadas #
 
 drop_cols = [
@@ -307,6 +315,10 @@ def remove_duplicates(df):
     print(f"Removed {before - len(df)} duplicates")
     return df
 
+df_clean = remove_duplicates(df_raw)
+
+df_copy = df_clean.copy()
+print("Cópia do DataFrame df_clean criada como df_copy.")
 #==============================================================================================================================#
 
 # PREPARAÇÃO DOS DADOS PARA TREINAMENTO DA IA #
@@ -419,6 +431,7 @@ config = {
     }
 }
 
+print(config['data']['feature_cols'])
 #==============================================================================================================================#
 
 # Configurar Treinamento e Avaliação #
@@ -664,8 +677,43 @@ with torch.no_grad(): # Desativar o cálculo de gradientes
 accuracy = correct / total
 print(f'Acurácia final da IA no conjunto de testes: {accuracy:.4f}')
 
+#========================================================================================================================
 
+# Criação da Matriz de Confusão #
 
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Assegure que o modelo está no modo de avaliação e no dispositivo correto
+model_final.eval()
+
+all_predictions = []
+all_true_labels = []
+
+with torch.no_grad():
+    for X_batch, y_batch in test_loader:
+        X_batch = X_batch.to(device)
+        outputs = model_final(X_batch)
+        _, predicted = torch.max(outputs.data, 1)
+        all_predictions.extend(predicted.cpu().numpy())
+        all_true_labels.extend(y_batch.cpu().numpy())
+
+# Calcular a matriz de confusão
+cm = confusion_matrix(all_true_labels, all_predictions)
+
+# Definir rótulos para as classes (assumindo 0: Poor, 1: Standard, 2: Good)
+class_labels = ['Poor', 'Standard', 'Good']
+
+# Visualizar a matriz de confusão
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_labels, yticklabels=class_labels)
+plt.xlabel('Previsão do Modelo')
+plt.ylabel('Rótulo Verdadeiro')
+plt.title('Matriz de Confusão do Modelo MLP')
+plt.show()
+
+print("Matriz de Confusão calculada e visualizada com sucesso.")
 
 
 
